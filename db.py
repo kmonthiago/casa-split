@@ -1,11 +1,15 @@
+import os
 import sqlite3
 from datetime import datetime
 
-import os
-DB = os.getenv("DB_PATH", "casa-split.db")
+DB = os.getenv("DB_PATH", "casa_split.db")
 
 def conn():
+    db_dir = os.path.dirname(DB)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     return sqlite3.connect(DB, check_same_thread=False)
+
 
 def init_db():
     with conn() as c:
