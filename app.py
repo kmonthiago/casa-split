@@ -1,4 +1,3 @@
-import os
 import json
 import streamlit as st
 from datetime import date
@@ -16,37 +15,6 @@ from logic import compute_month_summary
 from parser import parse_quick_input
 
 st.set_page_config(page_title="Casa Split", layout="centered")
-
-APP_PASSWORD = os.getenv("APP_PASSWORD", "")
-
-def require_password():
-    if not APP_PASSWORD:
-        return True  # se não definir senha, não bloqueia
-
-    if st.session_state.get("auth_ok"):
-        return True
-
-    pw = st.text_input("Senha", type="password")
-    if st.button("Entrar"):
-        if pw == APP_PASSWORD:
-            st.session_state["auth_ok"] = True
-            st.rerun()
-        else:
-            st.error("Senha incorreta.")
-    st.stop()
-
-def last_n_months(n=12):
-    d = date.today().replace(day=1)
-    months = []
-    for _ in range(n):
-        months.append(f"{d.year}-{d.month:02d}")
-        if d.month == 1:
-            d = d.replace(year=d.year - 1, month=12)
-        else:
-            d = d.replace(month=d.month - 1)
-    return months
-
-require_password()
 
 init_db()
 upsert_default_users(user_a_name="Thiago", user_b_name="Marina")
