@@ -1,6 +1,7 @@
+import os
+import json
 import streamlit as st
 from datetime import date
-import json
 
 from db import (
     init_db,
@@ -15,6 +16,37 @@ from logic import compute_month_summary
 from parser import parse_quick_input
 
 st.set_page_config(page_title="Casa Split", layout="centered")
+
+APP_PASSWORD = os.getenv("APP_PASSWORD", "")
+
+def require_password():
+    if not APP_PASSWORD:
+        return True  # se não definir senha, não bloqueia
+
+    if st.session_state.get("auth_ok"):
+        return True
+
+    pw = st.text_input("Senha", type="password")
+    if st.button("Entrar"):
+        if pw == APP_PASSWORD:
+            st.session_state["auth_ok"] = True
+            st.rerun()
+        else:
+            st.error("Senha incorreta.")
+    st.stop()
+
+def last_n_months(n=12):
+    d = date.today().replace(day=1)
+    months = []
+    for _ in range(n):
+        months.append(f"{d.year}-{d.month:02d}")
+        if d.month == 1:
+            d = d.replace(year=d.year - 1, month=12)
+        else:
+            d = d.replace(month=d.month - 1)
+    return months
+
+require_password()
 
 init_db()
 upsert_default_users(user_a_name="Thiago", user_b_name="Marina")
@@ -42,9 +74,14 @@ if page == "Adicionar gasto":
             user_b_name=user_b["name"],
             default_split=DEFAULT_SPLIT
         )
+        if not parsed:
+            st.warning("Não consegui interpretar. Inclua um valor, ex: 'mercado 127,90 hoje eu paguei'.")
         st.session_state["parsed"] = parsed
 
     parsed = st.session_state.get("parsed")
+    if parsed is None and quick.strip():
+        st.caption("Dica: inclua um valor numérico (ex: 127,90) e opcionalmente categoria (mercado, luz, condominio).")
+
     if parsed:
         st.info(
             f"Preview: R$ {parsed['amount']:.2f} | {parsed['category']} | Pagador: {parsed['payer']} | "
@@ -104,8 +141,7 @@ if page == "Adicionar gasto":
 
 elif page == "Resumo do mês":
     st.header("Resumo do mês")
-    today = date.today()
-    month = st.selectbox("Mês", [f"{today.year}-{today.month:02d}"], index=0)
+    month = st.selectbox("Mês", last_n_months(12), index=0)
     expenses = list_expenses_month(month)
 
     summary = compute_month_summary(expenses, user_a, user_b)
@@ -127,8 +163,7 @@ elif page == "Resumo do mês":
 
 elif page == "Fechamento":
     st.header("Fechamento")
-    today = date.today()
-    month = st.selectbox("Mês", [f"{today.year}-{today.month:02d}"], index=0)
+    month = st.selectbox("Mês", last_n_months(12), index=0)
 
     expenses = list_expenses_month(month)
     summary = compute_month_summary(expenses, user_a, user_b)
