@@ -1,6 +1,7 @@
 import json
 import streamlit as st
-from datetime import date
+from datetime import date, datetime, timedelta
+import os
 
 from db import (
     init_db,
@@ -12,9 +13,39 @@ from db import (
     get_settlement,
 )
 from logic import compute_month_summary
-from parser import parse_quick_input
 
 st.set_page_config(page_title="Casa Split", layout="centered")
+
+# ===== GERENCIAMENTO DE CATEGORIAS =====
+CATEGORIAS_FILE = "categorias.json"
+
+def carregar_categorias():
+    """Carrega categorias do arquivo ou retorna padrão"""
+    if os.path.exists(CATEGORIAS_FILE):
+        try:
+            with open(CATEGORIAS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return get_categorias_padrao()
+    return get_categorias_padrao()
+
+def get_categorias_padrao():
+    """Retorna categorias padrão"""
+    return ["Outro"]
+
+def salvar_categorias(categorias):
+    """Salva categorias em arquivo JSON"""
+    with open(CATEGORIAS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(categorias, f, ensure_ascii=False, indent=2)
+
+def adicionar_categoria_personalizada(nova_categoria):
+    """Adiciona uma nova categoria personalizada"""
+    categorias = carregar_categorias()
+    if nova_categoria not in categorias and nova_categoria.strip():
+        categorias.append(nova_categoria)
+        salvar_categorias(categorias)
+        return True
+    return False
 
 init_db()
 upsert_default_users(user_a_name="Thiago", user_b_name="Marina")
@@ -27,56 +58,54 @@ page = st.sidebar.radio("Menu", ["Adicionar gasto", "Resumo do mês", "Fechament
 
 DEFAULT_SPLIT = (0.5, 0.5)
 
+def last_n_months(n):
+    """Retorna lista dos últimos n meses em formato YYYY-MM."""
+    from datetime import datetime, timedelta
+    months = []
+    today = datetime.today()
+    for i in range(n):
+        first_day_of_month = today.replace(day=1) - timedelta(days=i*30)
+        months.append(first_day_of_month.strftime("%Y-%m"))
+    return sorted(set(months), reverse=True)
+
+
+
 if page == "Adicionar gasto":
     st.header("Adicionar gasto")
-
-    st.subheader("Entrada rápida (linguagem natural)")
-    quick = st.text_input("Digite o gasto", placeholder="mercado 327,90 angeloni hoje 60/40 eu paguei")
-
-    col1, col2 = st.columns([1, 1])
-
-    if col1.button("Interpretar"):
-        parsed = parse_quick_input(
-            quick,
-            user_a_name=user_a["name"],
-            user_b_name=user_b["name"],
-            default_split=DEFAULT_SPLIT
-        )
-        if not parsed:
-            st.warning("Não consegui interpretar. Inclua um valor, ex: 'mercado 127,90 hoje eu paguei'.")
-        st.session_state["parsed"] = parsed
-
-    parsed = st.session_state.get("parsed")
-    if parsed is None and quick.strip():
-        st.caption("Dica: inclua um valor numérico (ex: 127,90) e opcionalmente categoria (mercado, luz, condominio).")
-
-    if parsed:
-        st.info(
-            f"Preview: R$ {parsed['amount']:.2f} | {parsed['category']} | Pagador: {parsed['payer']} | "
-            f"Split: {int(parsed['split_a']*100)}/{int(parsed['split_b']*100)} | Data: {parsed['spent_at']} | "
-            f"{parsed['description']}"
-        )
-        if col2.button("Salvar (preview)"):
-            split_json = json.dumps({str(user_a["id"]): parsed["split_a"], str(user_b["id"]): parsed["split_b"]})
-            payer_id = user_a["id"] if parsed["payer"] == user_a["name"] else user_b["id"]
-            add_expense(
-                amount_cents=int(round(parsed["amount"] * 100)),
-                payer_user_id=payer_id,
-                category=parsed["category"],
-                description=parsed["description"],
-                spent_at=parsed["spent_at"],
-                split_json=split_json
-            )
-            st.success("Gasto salvo.")
-            st.session_state["parsed"] = None
-
+    st.markdown("Preencha os detalhes do gasto abaixo:")
     st.divider()
-    st.subheader("Formulário manual")
 
-    amount = st.number_input("Valor (R$)", min_value=0.0, step=1.0, format="%.2f")
-    payer = st.selectbox("Pagador", [user_a["name"], user_b["name"]])
-    category = st.selectbox("Categoria", ["Moradia", "Contas", "Mercado", "Casa", "Móveis & Eletro", "Pets", "Transporte", "Outros"])
-    split_mode = st.radio("Split", ["50/50", "60/40", "70/30", "Personalizado"], horizontal=True)
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        amount = st.number_input("💰 Valor (R$)", min_value=0.0, step=0.01, format="%.2f")
+    with col2:
+        spent_at = st.date_input("📅 Data", value=date.today())
+
+    payer = st.selectbox("👤 Quem pagou?", [user_a["name"], user_b["name"]])
+    
+    # Carregar categorias dinâmicas
+    categorias = carregar_categorias()
+    category = st.selectbox("📁 Categoria", categorias)
+    
+    # Se "Outro" for selecionado, pedir especificação
+    categoria_usada = category
+    if category == "Outro":
+        st.warning("ℹ️ Especifique qual é a categoria:")
+        categoria_customizada = st.text_input(
+            "Qual categoria?",
+            placeholder="ex: Restaurante, Viagem, Farmácia, Eletrônicos...",
+            key="categoria_customizada_input"
+        )
+        if categoria_customizada.strip():
+            categoria_usada = categoria_customizada
+            # Adicionar automaticamente à lista de categorias
+            if adicionar_categoria_personalizada(categoria_customizada):
+                st.success(f"✨ Categoria '{categoria_customizada}' adicionada!")
+    
+    description = st.text_input("📝 Descrição (opcional)", placeholder="ex: Angeloni - limpeza")
+
+    st.markdown("### Como dividir este gasto?")
+    split_mode = st.radio("Opções de divisão:", ["50/50", "60/40", "70/30", "Personalizado"], horizontal=True)
 
     if split_mode == "50/50":
         split_a, split_b = 0.5, 0.5
@@ -85,72 +114,132 @@ if page == "Adicionar gasto":
     elif split_mode == "70/30":
         split_a, split_b = 0.7, 0.3
     else:
-        split_a_pct = st.number_input(f"{user_a['name']} (%)", min_value=0, max_value=100, value=50)
-        split_b_pct = 100 - split_a_pct
+        col_split1, col_split2 = st.columns([1, 1])
+        with col_split1:
+            split_a_pct = st.number_input(f"{user_a['name']} (%)", min_value=0, max_value=100, value=50, key="split_a_pct")
+        with col_split2:
+            split_b_pct = 100 - split_a_pct
+            st.number_input(f"{user_b['name']} (%)", value=split_b_pct, disabled=True, key="split_b_pct")
         split_a, split_b = split_a_pct/100.0, split_b_pct/100.0
-        st.caption(f"{user_b['name']} (%) = {int(split_b*100)}")
 
-    spent_at = st.date_input("Data do gasto", value=date.today())
-    description = st.text_input("Descrição", placeholder="ex: Angeloni / materiais limpeza")
+    st.divider()
+    col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
 
-    colA, colB = st.columns([1, 1])
-    if colA.button("Salvar"):
-        split_json = json.dumps({str(user_a["id"]): split_a, str(user_b["id"]): split_b})
-        payer_id = user_a["id"] if payer == user_a["name"] else user_b["id"]
-        add_expense(
-            amount_cents=int(round(amount * 100)),
-            payer_user_id=payer_id,
-            category=category,
-            description=description.strip(),
-            spent_at=str(spent_at),
-            split_json=split_json
-        )
-        st.success("Gasto salvo.")
+    with col_btn1:
+        if st.button("✅ Salvar gasto", use_container_width=True):
+            if amount <= 0:
+                st.error("O valor deve ser maior que zero.")
+            elif category == "Outro" and categoria_usada == "Outro":
+                st.error("❌ Especifique a categoria (não pode ser apenas 'Outro').")
+            else:
+                split_json = json.dumps({str(user_a["id"]): split_a, str(user_b["id"]): split_b})
+                payer_id = user_a["id"] if payer == user_a["name"] else user_b["id"]
+                add_expense(
+                    amount_cents=int(round(amount * 100)),
+                    payer_user_id=payer_id,
+                    category=categoria_usada,
+                    description=description.strip() or categoria_usada,
+                    spent_at=str(spent_at),
+                    split_json=split_json
+                )
+                st.success("✨ Gasto salvo com sucesso!")
+                st.balloons()
+
+    with col_btn3:
+        split_display = f"{int(split_a*100)}/{int(split_b*100)}"
+        st.caption(f"📊 Preview: R$ {amount:.2f} | {categoria_usada if categoria_usada != 'Outro' else category} | {split_display}")
 
 elif page == "Resumo do mês":
     st.header("Resumo do mês")
-    month = st.selectbox("Mês", last_n_months(12), index=0)
+    month = st.selectbox("📅 Selecione o mês", last_n_months(12), index=0)
     expenses = list_expenses_month(month)
 
     summary = compute_month_summary(expenses, user_a, user_b)
-    st.metric("Total do mês", f"R$ {summary['total']:.2f}")
-
-    st.write(f"{user_a['name']} pagou: R$ {summary['paid_a']:.2f}")
-    st.write(f"{user_b['name']} pagou: R$ {summary['paid_b']:.2f}")
-
-    st.divider()
-    st.subheader("Saldo")
-    st.write(f"{user_a['name']} deveria pagar: R$ {summary['quota_a']:.2f} | Saldo: R$ {summary['bal_a']:.2f}")
-    st.write(f"{user_b['name']} deveria pagar: R$ {summary['quota_b']:.2f} | Saldo: R$ {summary['bal_b']:.2f}")
-
-    st.success(summary["suggestion"])
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("💰 Total do mês", f"R$ {summary['total']:.2f}")
+    with col2:
+        st.metric(f"💳 {user_a['name']}", f"R$ {summary['paid_a']:.2f}")
+    with col3:
+        st.metric(f"💳 {user_b['name']}", f"R$ {summary['paid_b']:.2f}")
 
     st.divider()
-    st.subheader("Gastos do mês")
-    st.dataframe(expenses, use_container_width=True)
+    st.subheader("💹 Análise de saldo")
+    col_a, col_b = st.columns(2)
+    
+    with col_a:
+        st.write(f"**{user_a['name']}**")
+        st.write(f"Pagou: R$ {summary['paid_a']:.2f}")
+        st.write(f"Deveria pagar: R$ {summary['quota_a']:.2f}")
+        st.write(f"**Saldo: R$ {summary['bal_a']:.2f}**")
+    
+    with col_b:
+        st.write(f"**{user_b['name']}**")
+        st.write(f"Pagou: R$ {summary['paid_b']:.2f}")
+        st.write(f"Deveria pagar: R$ {summary['quota_b']:.2f}")
+        st.write(f"**Saldo: R$ {summary['bal_b']:.2f}**")
+
+    st.success(f"✅ {summary['suggestion']}")
+
+    st.divider()
+    st.subheader("📋 Gastos do mês")
+    if not expenses:
+        st.info("Nenhum gasto registrado neste mês.")
+    else:
+        st.dataframe(expenses, use_container_width=True)
 
 elif page == "Fechamento":
-    st.header("Fechamento")
-    month = st.selectbox("Mês", last_n_months(12), index=0)
+    st.header("🔐 Fechamento do mês")
+    month = st.selectbox("📅 Selecione o mês", last_n_months(12), index=0)
 
     expenses = list_expenses_month(month)
     summary = compute_month_summary(expenses, user_a, user_b)
-    st.info(summary["suggestion"])
+    
+    st.info(f"💡 Sugestão de acerto: {summary['suggestion']}")
 
     existing = get_settlement(month)
     if existing and existing["paid_at"]:
-        st.success(f"Mês já fechado em {existing['paid_at']}.")
+        st.success(f"✅ Mês já fechado em {existing['paid_at']}.")
     else:
-        if st.button("Marcar como pago"):
+        st.warning("⚠️ Este mês ainda não foi fechado.")
+        if st.button("✔️ Marcar como pago", use_container_width=True):
             from_id, to_id, amount = summary["settle_from_to_amount"]
             if amount > 0:
                 add_settlement(month, from_id, to_id, int(round(amount * 100)))
-                st.success("Fechamento registrado.")
+                st.success(f"✨ Fechamento registrado! Mês {month} finalizado.")
             else:
-                st.success("Nada a acertar neste mês.")
+                st.success("✅ Nada a acertar neste mês. Mês finalizado!")
 
 else:
-    st.header("Configurações (mini)")
-    st.write("Usuários fixos: Thiago e Marina")
-    st.write("Split padrão: 50/50")
-    st.write("Categorias: padrão do MVP")
+    st.header("⚙️ Configurações")
+    st.divider()
+    
+    st.markdown("### 📋 Categorias Disponíveis")
+    
+    categorias = carregar_categorias()
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.markdown("**Categorias Atuais:**")
+        for i, cat in enumerate(categorias, 1):
+            st.markdown(f"{i}. {cat}")
+    
+    with col2:
+        st.markdown("**Total:**")
+        st.metric("", len(categorias))
+        
+        if st.button("🔄 Resetar para Padrão", use_container_width=True):
+            salvar_categorias(get_categorias_padrao())
+            st.success("✅ Categorias resetadas para o padrão!")
+            st.rerun()
+    
+    st.divider()
+    st.markdown("### ℹ️ Informações da Aplicação")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"**👥 Usuários:** {user_a['name']} e {user_b['name']}")
+        st.write(f"**💰 Split padrão:** 50/50")
+    with col2:
+        st.write(f"**📁 Total de categorias:** {len(categorias)}")
+        st.write(f"**📄 Arquivo:** {CATEGORIAS_FILE}")
