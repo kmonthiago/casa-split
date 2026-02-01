@@ -105,22 +105,87 @@ if page == "Adicionar gasto":
     description = st.text_input("📝 Descrição (opcional)", placeholder="ex: Angeloni - limpeza")
 
     st.markdown("### Como dividir este gasto?")
-    split_mode = st.radio("Opções de divisão:", ["50/50", "60/40", "70/30", "Personalizado"], horizontal=True)
-
-    if split_mode == "50/50":
-        split_a, split_b = 0.5, 0.5
-    elif split_mode == "60/40":
-        split_a, split_b = 0.6, 0.4
-    elif split_mode == "70/30":
-        split_a, split_b = 0.7, 0.3
-    else:
-        col_split1, col_split2 = st.columns([1, 1])
-        with col_split1:
-            split_a_pct = st.number_input(f"{user_a['name']} (%)", min_value=0, max_value=100, value=50, key="split_a_pct")
-        with col_split2:
+    
+    # Inicializar split padrão
+    if "edit_split" not in st.session_state:
+        st.session_state.edit_split = False
+    if "split_mode_temp" not in st.session_state:
+        st.session_state.split_mode_temp = "percentage"
+    if "split_a_pct_temp" not in st.session_state:
+        st.session_state.split_a_pct_temp = 50
+    
+    # Display do split com botão de edição
+    col_split_display, col_split_edit = st.columns([3, 1])
+    
+    with col_split_display:
+        current_split_a_pct = st.session_state.get("split_a_pct_temp", 50)
+        current_split_b_pct = 100 - current_split_a_pct
+        st.markdown(f"**💰 Divisão: {int(current_split_a_pct)}% / {int(current_split_b_pct)}%**")
+    
+    with col_split_edit:
+        if st.button("✏️ Editar", use_container_width=True):
+            st.session_state.edit_split = not st.session_state.edit_split
+    
+    # Se estiver em modo edição
+    if st.session_state.edit_split:
+        st.divider()
+        st.markdown("#### Editar divisão:")
+        
+        edit_mode = st.radio(
+            "Escolha como editar:",
+            ["📊 Por percentual", "💵 Por valor"],
+            horizontal=True,
+            key="edit_split_mode"
+        )
+        
+        if edit_mode == "📊 Por percentual":
+            split_a_pct = st.slider(
+                f"{user_a['name']} (%)",
+                min_value=0,
+                max_value=100,
+                value=st.session_state.split_a_pct_temp,
+                step=1,
+                key="slider_split_a"
+            )
             split_b_pct = 100 - split_a_pct
-            st.number_input(f"{user_b['name']} (%)", value=split_b_pct, disabled=True, key="split_b_pct")
-        split_a, split_b = split_a_pct/100.0, split_b_pct/100.0
+            st.caption(f"{user_b['name']}: {split_b_pct}%")
+            st.session_state.split_a_pct_temp = split_a_pct
+        else:
+            col_val1, col_val2 = st.columns(2)
+            with col_val1:
+                amount_a = st.number_input(
+                    f"Valor {user_a['name']} (R$)",
+                    min_value=0.0,
+                    step=0.01,
+                    key="amount_a_split"
+                )
+            with col_val2:
+                amount_b = st.number_input(
+                    f"Valor {user_b['name']} (R$)",
+                    min_value=0.0,
+                    step=0.01,
+                    key="amount_b_split"
+                )
+            
+            total_split = amount_a + amount_b
+            if total_split > 0:
+                split_a_pct = int((amount_a / total_split) * 100)
+                split_b_pct = 100 - split_a_pct
+                st.session_state.split_a_pct_temp = split_a_pct
+                st.caption(f"Divisão: {split_a_pct}% / {split_b_pct}%")
+            else:
+                st.warning("⚠️ Insira valores maiores que zero")
+                split_a_pct = 50
+                split_b_pct = 50
+        
+        st.divider()
+        if st.button("✅ Confirmar divisão", use_container_width=True):
+            st.session_state.edit_split = False
+            st.success("✨ Divisão atualizada!")
+    
+    # Aplicar split final
+    split_a = st.session_state.split_a_pct_temp / 100.0
+    split_b = (100 - st.session_state.split_a_pct_temp) / 100.0
 
     st.divider()
     col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
